@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <title>Sign In | Golden Wears</title>
+
+    <link
+      href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/css/bootstrap.min.css"
+      rel="stylesheet"
+    />
+
+    <link rel="stylesheet" href="signIn.css" />
+  </head>
+
+  <body>
+    <main class="login-page">
+      <a href="index.html" class="back-to-store"> ← Back to Golden Wears </a>
+
+      <div class="decor decor-left">
+        <span></span>
+        <span></span>
+        <span></span>
+        <span></span>
+        <span></span>
+      </div>
+
+      <div class="decor decor-right">
+        <span></span>
+        <span></span>
+        <span></span>
+        <span></span>
+        <span></span>
+      </div>
+
+      <div class="decor decor-bottom">
+        <span></span>
+        <span></span>
+        <span></span>
+        <span></span>
+        <span></span>
+      </div>
+
+      <section class="login-card">
+        <div class="brand-logo" aria-label="Golden Wears logo">
+          <span>G</span>
+
+          <div class="logo-lines">
+            <i></i>
+            <i></i>
+          </div>
+
+          <span>W</span>
+        </div>
+
+        <p class="brand-name">GOLDEN WEARS</p>
+
+        <h1>Welcome<br />Back</h1>
+
+        <p class="login-description">Sign in to continue your style journey.</p>
+
+        <form id="signInForm">
+          <div class="form-group">
+            <label for="email">Email</label>
+
+            <input
+              type="email"
+              id="email"
+              name="email"
+              placeholder="Enter your email"
+              autocomplete="email"
+              required
+            />
+          </div>
+
+          <div class="form-group password-group">
+            <label for="password">Password</label>
+
+            <input
+              type="password"
+              id="password"
+              name="password"
+              placeholder="Enter your password"
+              autocomplete="current-password"
+              required
+            />
+          </div>
+
+          <p class="forgot-password">
+            <a href="forgotPassword.html"> Forgot password? </a>
+          </p>
+
+          <button type="submit" class="sign-in-btn" id="signInBtn">
+            SIGN IN
+          </button>
+
+          <p class="create-account">
+            New to Golden Wears?
+            <a href="signUp.html">Create an account</a>
+          </p>
+        </form>
+
+        <div
+          id="formMessage"
+          class="d-none text-center alert rounded-3"
+          role="status"
+          aria-live="polite"
+        ></div>
+      </section>
+    </main>
+
+
+<script type="module">
+  import {
+    initializeApp
+  } from "https://www.gstatic.com/firebasejs/13.1.0/firebase-app.js";
+
+  import {
+    getAuth,
+    signInWithEmailAndPassword
+  } from "https://www.gstatic.com/firebasejs/13.1.0/firebase-auth.js";
+
+  import {
+    getFirestore,
+    doc,
+    getDoc
+  } from "https://www.gstatic.com/firebasejs/13.1.0/firebase-firestore.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyDtqlrAV5VDk98_9iHlEpbBozdyZNKAgGw",
+    authDomain: "golden-wears.firebaseapp.com",
+    projectId: "golden-wears",
+    storageBucket: "golden-wears.firebasestorage.app",
+    messagingSenderId: "215953923432",
+    appId: "1:215953923432:web:f8c93daa03d551cd950add",
+    measurementId: "G-K8GRJF2ZJR"
+  };
+
+  const app = initializeApp(firebaseConfig);
+  const auth = getAuth(app);
+  const db = getFirestore(app);
+
+  const signInForm = document.getElementById("signInForm");
+  const email = document.getElementById("email");
+  const password = document.getElementById("password");
+  const formMessage = document.getElementById("formMessage");
+  const signInBtn = document.getElementById("signInBtn");
+
+  function showFormMessage(message, type) {
+    formMessage.textContent = message;
+    formMessage.className =
+      "text-center alert rounded-3 alert-" + type;
+  }
+
+  signInForm.addEventListener("submit", function (event) {
+    event.preventDefault();
+
+    signInBtn.disabled = true;
+    signInBtn.textContent = "SIGNING IN...";
+
+    signInWithEmailAndPassword(
+      auth,
+      email.value.trim(),
+      password.value
+    )
+      .then(async function (userCredential) {
+        const user = userCredential.user;
+
+        showFormMessage(
+          "Sign in successful! Checking your account...",
+          "success"
+        );
+
+        // Check whether this account is an administrator.
+        const adminRef = doc(db, "Admins", user.uid);
+        const adminSnapshot = await getDoc(adminRef);
+
+        if (
+          adminSnapshot.exists() &&
+          adminSnapshot.data().role === "admin"
+        ) {
+          window.location.replace("../admin/index.html");
+          return;
+        }
+
+
+        const returnTo = new URLSearchParams(
+          window.location.search
+        ).get("returnTo");
+
+        if (returnTo === "checkout.html") {
+          window.location.replace("checkout.html");
+        } else {
+          window.location.replace("dashboard.html");
+        }
+      })
+      .catch(function (error) {
+        console.log("Sign-in error:", error.code, error.message);
+
+        if (
+          error.code === "auth/invalid-credential" ||
+          error.code === "auth/wrong-password" ||
+          error.code === "auth/user-not-found"
+        ) {
+          showFormMessage(
+            "Incorrect email or password. Please try again.",
+            "danger"
+          );
+        } else if (error.code === "auth/invalid-email") {
+          showFormMessage(
+            "Please enter a valid email address.",
+            "danger"
+          );
+        } else if (error.code === "auth/too-many-requests") {
+          showFormMessage(
+            "Too many attempts. Please try again later.",
+            "danger"
+          );
+        } else {
+          showFormMessage(
+            "Unable to complete sign in. Please check your connection and try again.",
+            "danger"
+          );
+        }
+
+        signInBtn.disabled = false;
+        signInBtn.textContent = "SIGN IN";
+      });
+  });
+</script>
+
+
+  </body>
+</html>
