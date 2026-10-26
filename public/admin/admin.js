@@ -583,12 +583,17 @@ adminLinks.forEach(function (link) {
 });
 
 
+
 document.getElementById("logoutBtn").addEventListener("click", async function () {
     try {
         await signOut(auth);
-        window.location.replace("./public/signIn.html");
+
+        window.location.replace("../signIn.html");
+
     } catch (error) {
         console.log("Logout error:", error);
+
         showMessage("Unable to log out. Please try again.", "error");
     }
 });
+
