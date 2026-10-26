@@ -29,16 +29,23 @@ const firebaseConfig = {
     messagingSenderId: "215953923432",
     appId: "1:215953923432:web:f8c93daa03d551cd950add",
     measurementId: "G-K8GRJF2ZJR"
-  };
+};
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
 
+// CLOUDINARY CONFIGURATION
+const cloudName = "nhr2un1n";
+const uploadPreset = "golden_wears_products";
+
+
 // HIDE THE PAGE UNTIL ADMIN ACCESS IS VERIFIED
 document.body.style.visibility = "hidden";
 
+
+// DASHBOARD ELEMENTS
 const totalProducts = document.getElementById("totalProducts");
 const totalOrders = document.getElementById("totalOrders");
 const pendingOrders = document.getElementById("pendingOrders");
@@ -48,6 +55,8 @@ const recentOrders = document.getElementById("recentOrders");
 const allOrders = document.getElementById("allOrders");
 const productsTable = document.getElementById("productsTable");
 
+
+// PRODUCT FORM ELEMENTS
 const productForm = document.getElementById("productForm");
 const productFormCard = document.getElementById("productFormCard");
 const productFormTitle = document.getElementById("productFormTitle");
@@ -62,9 +71,15 @@ const productStock = document.getElementById("productStock");
 const productImage = document.getElementById("productImage");
 const productDescription = document.getElementById("productDescription");
 
+const imagePreview = document.getElementById("imagePreview");
+const imageMessage = document.getElementById("imageMessage");
+
 const logoutBtn = document.getElementById("logoutBtn");
 
+
+// TRACK THE CURRENT PRODUCT
 let editingProductId = null;
+let currentProductImage = "";
 let messageTimer;
 
 
@@ -104,6 +119,108 @@ function showMessage(message, type = "success") {
 }
 
 
+// CLEAR IMAGE PREVIEW
+function clearImagePreview() {
+    if (imagePreview) {
+        imagePreview.src = "";
+        imagePreview.style.display = "none";
+    }
+
+    if (imageMessage) {
+        imageMessage.textContent = "";
+    }
+}
+
+
+// RESET THE PRODUCT FORM
+function resetProductForm() {
+    productForm.reset();
+
+    editingProductId = null;
+    currentProductImage = "";
+
+    productFormTitle.textContent = "Add New Product";
+
+    clearImagePreview();
+}
+
+
+// PREVIEW THE SELECTED IMAGE
+productImage.addEventListener("change", function () {
+    const file = productImage.files[0];
+
+    if (!file) {
+        return;
+    }
+
+    const allowedTypes = [
+        "image/jpeg",
+        "image/png",
+        "image/webp"
+    ];
+
+    if (!allowedTypes.includes(file.type)) {
+        showMessage(
+            "Choose a JPG, PNG, or WEBP image.",
+            "error"
+        );
+
+        productImage.value = "";
+        return;
+    }
+
+    if (file.size > 5 * 1024 * 1024) {
+        showMessage(
+            "Your image must not be larger than 5MB.",
+            "error"
+        );
+
+        productImage.value = "";
+        return;
+    }
+
+    const imageURL = URL.createObjectURL(file);
+
+    imagePreview.src = imageURL;
+    imagePreview.style.display = "block";
+
+    imagePreview.onload = function () {
+        URL.revokeObjectURL(imageURL);
+    };
+
+    imageMessage.textContent = "Image selected successfully.";
+});
+
+
+// UPLOAD IMAGE TO CLOUDINARY
+async function uploadProductImage(file) {
+    const formData = new FormData();
+
+    formData.append("file", file);
+    formData.append("upload_preset", uploadPreset);
+
+    const response = await fetch(
+        `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`,
+        {
+            method: "POST",
+            body: formData
+        }
+    );
+
+    const result = await response.json();
+
+    if (!response.ok) {
+        console.error("Cloudinary upload error:", result);
+
+        throw new Error(
+            result.error?.message || "Image upload failed."
+        );
+    }
+
+    return result.secure_url;
+}
+
+
 // VERIFY THAT THE SIGNED-IN USER IS AN ADMIN
 onAuthStateChanged(auth, async function (user) {
     if (!user) {
@@ -123,7 +240,6 @@ onAuthStateChanged(auth, async function (user) {
             return;
         }
 
-        // Show the dashboard only after verification.
         document.body.style.visibility = "visible";
 
         await loadProducts();
@@ -135,7 +251,7 @@ onAuthStateChanged(auth, async function (user) {
         document.body.style.visibility = "visible";
 
         showMessage(
-            "Unable to verify admin access or load data. Check the Firebase API key and Firestore rules.",
+            "Unable to verify admin access or load data. Check your Firebase configuration and Firestore rules.",
             "error"
         );
     }
@@ -144,8 +260,7 @@ onAuthStateChanged(auth, async function (user) {
 
 // OPEN THE PRODUCT FORM
 showProductForm.addEventListener("click", function () {
-    productForm.reset();
-    editingProductId = null;
+    resetProductForm();
 
     productFormTitle.textContent = "Add New Product";
     productFormCard.classList.remove("hidden-section");
@@ -155,10 +270,8 @@ showProductForm.addEventListener("click", function () {
 // CLOSE THE PRODUCT FORM
 closeProductForm.addEventListener("click", function () {
     productFormCard.classList.add("hidden-section");
-    productForm.reset();
 
-    editingProductId = null;
-    productFormTitle.textContent = "Add New Product";
+    resetProductForm();
 });
 
 
@@ -170,8 +283,8 @@ productForm.addEventListener("submit", async function (event) {
     const price = Number(productPrice.value);
     const category = productCategory.value;
     const stock = Number(productStock.value);
-    const image = productImage.value.trim();
     const description = productDescription.value.trim();
+    const selectedFile = productImage.files[0];
 
     if (
         name === "" ||
@@ -180,29 +293,82 @@ productForm.addEventListener("submit", async function (event) {
         category === "" ||
         !Number.isInteger(stock) ||
         stock < 0 ||
-        image === "" ||
         description === ""
     ) {
-        showMessage("Please complete all fields correctly.", "error");
+        showMessage(
+            "Please complete all fields correctly.",
+            "error"
+        );
+
         return;
     }
 
-    const saveButton = productForm.querySelector('button[type="submit"]');
+    // A new product must have an image.
+    // An existing product can keep its current image.
+    if (!selectedFile && !currentProductImage) {
+        showMessage(
+            "Please select a product image.",
+            "error"
+        );
+
+        return;
+    }
+
+    if (selectedFile) {
+        const allowedTypes = [
+            "image/jpeg",
+            "image/png",
+            "image/webp"
+        ];
+
+        if (!allowedTypes.includes(selectedFile.type)) {
+            showMessage(
+                "Choose a JPG, PNG, or WEBP image.",
+                "error"
+            );
+
+            return;
+        }
+
+        if (selectedFile.size > 5 * 1024 * 1024) {
+            showMessage(
+                "Your image must not be larger than 5MB.",
+                "error"
+            );
+
+            return;
+        }
+    }
+
+    const saveButton = productForm.querySelector(
+        'button[type="submit"]'
+    );
 
     saveButton.disabled = true;
     saveButton.textContent = "Saving...";
 
-    const productData = {
-        name: name,
-        price: price,
-        category: category,
-        stock: stock,
-        image: image,
-        description: description,
-        updatedAt: serverTimestamp()
-    };
-
     try {
+        let imageURL = currentProductImage;
+
+        // Upload a new image only when one is selected.
+        if (selectedFile) {
+            saveButton.textContent = "Uploading Image...";
+
+            imageURL = await uploadProductImage(selectedFile);
+        }
+
+        const productData = {
+            name: name,
+            price: price,
+            category: category,
+            stock: stock,
+            image: imageURL,
+            description: description,
+            updatedAt: serverTimestamp()
+        };
+
+        saveButton.textContent = "Saving Product...";
+
         if (editingProductId) {
             await updateDoc(
                 doc(db, "products", editingProductId),
@@ -214,16 +380,17 @@ productForm.addEventListener("submit", async function (event) {
         } else {
             productData.createdAt = serverTimestamp();
 
-            await addDoc(collection(db, "products"), productData);
+            await addDoc(
+                collection(db, "products"),
+                productData
+            );
 
             showMessage("Product added successfully!");
         }
 
-        productForm.reset();
         productFormCard.classList.add("hidden-section");
 
-        editingProductId = null;
-        productFormTitle.textContent = "Add New Product";
+        resetProductForm();
 
         await loadProducts();
 
@@ -231,7 +398,7 @@ productForm.addEventListener("submit", async function (event) {
         console.error("Product save error:", error);
 
         showMessage(
-            "Unable to save product. Check your Firestore rules.",
+            error.message || "Unable to save product. Check your settings.",
             "error"
         );
 
@@ -244,7 +411,10 @@ productForm.addEventListener("submit", async function (event) {
 
 // LOAD PRODUCTS
 async function loadProducts() {
-    const productSnapshot = await getDocs(collection(db, "products"));
+    const productSnapshot = await getDocs(
+        collection(db, "products")
+    );
+
     const products = [];
 
     productSnapshot.forEach(function (productDocument) {
@@ -319,20 +489,36 @@ productsTable.addEventListener("click", async function (event) {
             );
 
             if (!productSnapshot.exists()) {
-                showMessage("This product could not be found.", "error");
+                showMessage(
+                    "This product could not be found.",
+                    "error"
+                );
+
                 return;
             }
 
             const product = productSnapshot.data();
 
+            resetProductForm();
+
             editingProductId = productId;
+            currentProductImage = product.image || "";
 
             productName.value = product.name || "";
             productPrice.value = product.price ?? "";
             productCategory.value = product.category || "";
             productStock.value = product.stock ?? 0;
-            productImage.value = product.image || "";
             productDescription.value = product.description || "";
+
+            // Show the existing image without putting a URL
+            // into the file input.
+            if (currentProductImage) {
+                imagePreview.src = currentProductImage;
+                imagePreview.style.display = "block";
+
+                imageMessage.textContent =
+                    "Current image. Select another file to replace it.";
+            }
 
             productFormTitle.textContent = "Edit Product";
             productFormCard.classList.remove("hidden-section");
@@ -343,7 +529,10 @@ productsTable.addEventListener("click", async function (event) {
             });
 
         } catch (error) {
-            console.error("Loading product for editing failed:", error);
+            console.error(
+                "Loading product for editing failed:",
+                error
+            );
 
             showMessage(
                 "Unable to open this product for editing.",
@@ -364,7 +553,9 @@ productsTable.addEventListener("click", async function (event) {
         button.disabled = true;
 
         try {
-            await deleteDoc(doc(db, "products", productId));
+            await deleteDoc(
+                doc(db, "products", productId)
+            );
 
             showMessage("Product deleted successfully!");
 
@@ -386,7 +577,10 @@ productsTable.addEventListener("click", async function (event) {
 
 // LOAD DASHBOARD STATISTICS AND ORDERS
 async function loadDashboard() {
-    const orderSnapshot = await getDocs(collection(db, "orders"));
+    const orderSnapshot = await getDocs(
+        collection(db, "orders")
+    );
+
     const orders = [];
 
     orderSnapshot.forEach(function (orderDocument) {
@@ -412,7 +606,9 @@ async function loadDashboard() {
     }
 
     pendingOrders.textContent = pendingCount;
-    totalRevenue.textContent = "₦" + revenue.toLocaleString();
+
+    totalRevenue.textContent =
+        "₦" + revenue.toLocaleString();
 
     recentOrders.innerHTML = "";
     allOrders.innerHTML = "";
@@ -438,8 +634,13 @@ async function loadDashboard() {
     }
 
     orders.sort(function (a, b) {
-        const dateA = a.createdAt ? a.createdAt.toMillis() : 0;
-        const dateB = b.createdAt ? b.createdAt.toMillis() : 0;
+        const dateA = a.createdAt
+            ? a.createdAt.toMillis()
+            : 0;
+
+        const dateB = b.createdAt
+            ? b.createdAt.toMillis()
+            : 0;
 
         return dateB - dateA;
     });
@@ -458,11 +659,18 @@ async function loadDashboard() {
 
         let orderDate = "N/A";
 
-        if (order.createdAt && typeof order.createdAt.toDate === "function") {
-            orderDate = order.createdAt.toDate().toLocaleDateString("en-NG");
+        if (
+            order.createdAt &&
+            typeof order.createdAt.toDate === "function"
+        ) {
+            orderDate = order.createdAt
+                .toDate()
+                .toLocaleDateString("en-NG");
         }
 
-        const currentStatus = orderStatuses.includes(order.orderStatus)
+        const currentStatus = orderStatuses.includes(
+            order.orderStatus
+        )
             ? order.orderStatus
             : "Pending";
 
@@ -478,7 +686,8 @@ async function loadDashboard() {
 
         const statusOptions = orderStatuses.map(function (status) {
             return `
-                <option value="${status}"
+                <option
+                    value="${status}"
                     ${status === currentStatus ? "selected" : ""}>
                     ${status}
                 </option>
@@ -520,9 +729,12 @@ allOrders.addEventListener("change", async function (event) {
     select.disabled = true;
 
     try {
-        await updateDoc(doc(db, "orders", orderId), {
-            orderStatus: selectedStatus
-        });
+        await updateDoc(
+            doc(db, "orders", orderId),
+            {
+                orderStatus: selectedStatus
+            }
+        );
 
         showMessage("Order status updated successfully!");
 
@@ -586,7 +798,10 @@ logoutBtn.addEventListener("click", async function () {
     } catch (error) {
         console.error("Logout error:", error);
 
-        showMessage("Unable to log out. Please try again.", "error");
+        showMessage(
+            "Unable to log out. Please try again.",
+            "error"
+        );
 
         logoutBtn.disabled = false;
     }
